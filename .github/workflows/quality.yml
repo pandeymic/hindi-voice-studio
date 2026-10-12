@@ -1,0 +1,23 @@
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Install lightweight development dependencies
+        run: uv sync --extra dev
+      - name: Run tests
+        run: uv run pytest
+      - name: Run lint
+        run: uv run ruff check .

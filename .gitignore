@@ -1,0 +1,31 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+.env
+
+# Audio uploads and generated samples are local data, never repository data.
+uploads/
+outputs/
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+*.webm
+*.aiff
+
+# Model and tooling caches.
+.cache/
+cache/
+models/
+*.safetensors
+*.pt
+*.pth
+
+.DS_Store
+build/
+dist/
