@@ -25,7 +25,7 @@ HINGLISH_WORDS = {
     "aur": "और", "awaaz": "आवाज़", "awaz": "आवाज़", "bahut": "बहुत",
     "bhi": "भी", "chahiye": "चाहिए", "chhota": "छोटा", "chota": "छोटा",
     "dhanyavaad": "धन्यवाद", "dosto": "दोस्तों", "doston": "दोस्तों",
-    "duniya": "दुनिया", "hai": "है", "hain": "हैं", "hamara": "हमारा",
+    "duniya": "दुनिया", "ek": "एक", "hai": "है", "hain": "हैं", "hamara": "हमारा",
     "hamari": "हमारी", "ho": "हो", "hoga": "होगा", "hona": "होना",
     "hoti": "होती", "hota": "होता", "hoon": "हूँ", "hum": "हम",
     "humne": "हमने", "ka": "का", "kaafi": "काफ़ी", "kaise": "कैसे",
@@ -70,8 +70,10 @@ def pronunciation_preview(text: str, language: str, replacements: str = "") -> s
     result = normalize_text(text)
     if len(result) > MAX_TEXT_CHARS:
         raise ValueError(f"Use at most {MAX_TEXT_CHARS} characters per generation.")
+    if language == "English":
+        return result
     mapping = dict(HINGLISH_WORDS) if language == "Hinglish" else {}
-    for line in replacements.splitlines():
+    for line in (replacements or "").splitlines():
         if not line.strip():
             continue
         key, separator, value = line.partition("=")

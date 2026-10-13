@@ -32,6 +32,8 @@ def generate_audio(
     temperature: float,
     seed: float,
     progress=None,
+    replacements: str = "",
+    manual_override: bool = False,
 ):
     """Validate UI inputs and return a Gradio-compatible audio tuple."""
 
@@ -39,11 +41,21 @@ def generate_audio(
         raise ValueError(
             "Confirm that you own this voice or have explicit permission to clone it."
         )
-    cleaned_text = normalize_text(prepared_text or text)
-    if not cleaned_text:
-        raise ValueError("Enter Hindi, Hinglish, or English text first.")
     if language not in LANGUAGE_CODES:
         raise ValueError("Choose Hindi, Hinglish, or English.")
+    if manual_override:
+        cleaned_text = normalize_text(prepared_text)
+        if not cleaned_text:
+            raise ValueError(
+                "Manual pronunciation override is enabled, but the speech text is blank. "
+                "Enter speech text or turn off the override."
+            )
+    else:
+        # The preview is a convenience for the UI, not the source of truth. Rebuild it
+        # from the current inputs so a stale preview cannot silently change the request.
+        cleaned_text = pronunciation_preview(text, language, replacements)
+    if not cleaned_text:
+        raise ValueError("Enter Hindi, Hinglish, or English text first.")
 
     options = GenerationOptions(
         exaggeration=float(exaggeration),
@@ -65,9 +77,9 @@ def generate_audio(
         text=cleaned_text,
         language=language,
         options=options,
-        model_version=engine.model_version,
+        model_version=engine.model_id(language_code(language)),
         device=engine.device,
-        revision=engine.revision,
+        revision=engine.revision_for(language_code(language)),
     )
     status = (
         f"Generated {result.chunks} text chunk{'s' if result.chunks != 1 else ''} "
@@ -76,6 +88,36 @@ def generate_audio(
         "Perth watermark included by Chatterbox."
     )
     return str(wav_path), status
+
+
+def _generate_audio_from_ui(
+    text: str,
+    language: str,
+    reference_audio: str | None,
+    consent: bool,
+    prepared_text: str,
+    exaggeration: float,
+    cfg_weight: float,
+    temperature: float,
+    seed: float,
+    replacements: str,
+    manual_override: bool,
+):
+    """Adapt Gradio's inputs without treating them as the progress callback."""
+
+    return generate_audio(
+        text,
+        language,
+        reference_audio,
+        consent,
+        prepared_text,
+        exaggeration,
+        cfg_weight,
+        temperature,
+        seed,
+        replacements=replacements,
+        manual_override=manual_override,
+    )
 
 
 def build_demo():
@@ -88,8 +130,10 @@ def build_demo():
             ### Your voice. Hindi, Hinglish, or English. Generated locally.
 
             Upload **your own voice** or a recording you are explicitly authorized
-            to use. The app uses Chatterbox Multilingual V3 and keeps the sample
-            local while this server is running.
+            to use. The default target is Chatterbox Multilingual V3. A
+            Hindi-specific loader (`VOICE_STUDIO_HINDI_MODEL=dedicated`) is an opt-in
+            experimental setting and has not been audio-verified; generated samples
+            stay local while this server is running.
             """
         )
         with gr.Row():
@@ -124,7 +168,18 @@ def build_demo():
                 prepared_text = gr.Textbox(
                     label="Speech text preview (edit before generating)",
                     lines=6,
-                    info="For Hinglish, common Roman-Hindi words are suggested in Devanagari.",
+                    info=(
+                        "Hinglish help is conservative: a small dictionary is converted, "
+                        "while English and unknown Roman-Hindi words stay as entered."
+                    ),
+                )
+                manual_override = gr.Checkbox(
+                    label="Use edited speech text exactly (manual override)",
+                    value=False,
+                    info=(
+                        "Off: Generate prepares the current Text and rules again. On: "
+                        "the edited preview is sent exactly as written."
+                    ),
                 )
                 with gr.Accordion("Voice controls", open=True):
                     exaggeration = gr.Slider(
@@ -145,14 +200,15 @@ def build_demo():
                 gr.Markdown(
                     """
                     **Quality tips:** use 6–12 seconds of clean speech, avoid music and
-                    reverb, and use Devanagari for a Roman Hindi word that is pronounced
-                    incorrectly. Generated files include Chatterbox's imperceptible
-                    Perth watermark.
+                    reverb. Automatic Hinglish preparation is intentionally limited, so
+                    use Devanagari for a Roman Hindi word that is pronounced incorrectly
+                    or enable the manual override. Generated files include Chatterbox's
+                    imperceptible Perth watermark.
                     """
                 )
 
         generate.click(
-            fn=generate_audio,
+            fn=_generate_audio_from_ui,
             inputs=[
                 text,
                 language,
@@ -163,6 +219,8 @@ def build_demo():
                 cfg_weight,
                 temperature,
                 seed,
+                replacements,
+                manual_override,
             ],
             outputs=[output, status],
         )

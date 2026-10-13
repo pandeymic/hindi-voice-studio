@@ -18,7 +18,10 @@ from .audio import prepare_reference
 from .text import chunk_text
 
 MODEL_REVISION = "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18"
+HINDI_MODEL_REVISION = "82ca71273cc2a9ab19efdf8315f865c1a5af0ee7"
 MODEL_FILES = {"v2": "t3_mtl23ls_v2.safetensors", "v3": "t3_mtl23ls_v3.safetensors"}
+MULTILINGUAL_REPO = "ResembleAI/chatterbox"
+HINDI_REPO = "ResembleAI/Chatterbox-Multilingual-hi"
 
 
 @dataclass(frozen=True)
@@ -67,17 +70,35 @@ def select_device(preference: str = "auto") -> str:
 
 
 class VoiceEngine:
-    def __init__(self, device: str = "auto", model_version: str = "v3"):
+    def __init__(
+        self, device: str = "auto", model_version: str = "v3", hindi_model: str = "multilingual"
+    ):
         if model_version not in MODEL_FILES:
             raise ValueError("CHATTERBOX_MULTILINGUAL_T3_MODEL must be v2 or v3.")
+        if hindi_model not in {"dedicated", "multilingual"}:
+            raise ValueError("VOICE_STUDIO_HINDI_MODEL must be dedicated or multilingual.")
         self.device = device
         self.model_version = model_version
+        self.hindi_model = hindi_model
         self.revision = os.getenv("VOICE_STUDIO_MODEL_REVISION", MODEL_REVISION)
-        self._model = None
+        self.hindi_revision = os.getenv("VOICE_STUDIO_HINDI_MODEL_REVISION", HINDI_MODEL_REVISION)
+        self._models = {}
         self._lock = threading.Lock()
 
-    def _load_model(self):
-        if self._model is None:
+    def model_id(self, language_id: str) -> str:
+        """Describe the model selected for a language in generated metadata."""
+
+        if language_id == "hi" and self.hindi_model == "dedicated":
+            return "ResembleAI/Chatterbox-Multilingual-hi"
+        return f"{MULTILINGUAL_REPO}:{self.model_version}"
+
+    def revision_for(self, language_id: str) -> str:
+        if language_id == "hi" and self.hindi_model == "dedicated":
+            return self.hindi_revision
+        return self.revision
+
+    def _load_multilingual_model(self):
+        if "multilingual" not in self._models:
             os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
             try:
                 import torch
@@ -92,17 +113,95 @@ class VoiceEngine:
             torch.set_num_threads(max(1, int(os.getenv("VOICE_STUDIO_THREADS", "4"))))
             # Pin weights independently of the package version for repeatable runs.
             checkpoint = snapshot_download(
-                repo_id="ResembleAI/chatterbox", revision=self.revision,
+                repo_id=MULTILINGUAL_REPO, revision=self.revision,
                 allow_patterns=[
                     "ve.pt", MODEL_FILES[self.model_version], "s3gen.pt",
                     "grapheme_mtl_merged_expanded_v1.json", "conds.pt", "Cangjie5_TC.json",
                 ],
                 token=os.getenv("HF_TOKEN"),
             )
-            self._model = ChatterboxMultilingualTTS.from_local(
+            self._models["multilingual"] = ChatterboxMultilingualTTS.from_local(
                 Path(checkpoint), self.device, t3_model=self.model_version,
             )
-        return self._model
+        return self._models["multilingual"]
+
+    def _load_hindi_model(self):
+        """Load the upstream Hindi single-language V3 finetune.
+
+        It supplies Hindi-specific T3 and S3Gen weights. The speaker encoder and
+        tokenizer are shared assets from the base Chatterbox repository.
+        """
+        if "hindi" not in self._models:
+            os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+            try:
+                import torch
+                from chatterbox.models.s3gen import S3Gen
+                from chatterbox.models.t3 import T3
+                from chatterbox.models.t3.modules.t3_config import T3Config
+                from chatterbox.models.tokenizers import MTLTokenizer
+                from chatterbox.models.voice_encoder import VoiceEncoder
+                from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+                from huggingface_hub import snapshot_download
+                from safetensors.torch import load_file as load_safetensors
+            except ImportError as exc:
+                raise RuntimeError(
+                    "The local model dependencies are missing or incompatible. "
+                    "Run `uv sync --extra local` in the project directory."
+                ) from exc
+
+            self.device = select_device(self.device)
+            shared = snapshot_download(
+                repo_id=MULTILINGUAL_REPO,
+                revision=self.revision,
+                allow_patterns=["ve.pt", "grapheme_mtl_merged_expanded_v1.json"],
+                token=os.getenv("HF_TOKEN"),
+            )
+            hindi = snapshot_download(
+                repo_id=HINDI_REPO,
+                revision=self.hindi_revision,
+                allow_patterns=["t3_hi.safetensors", "s3gen_v3.pt", "grapheme_mtl_merged_expanded_v1.json"],
+                token=os.getenv("HF_TOKEN"),
+            )
+            shared_path = Path(shared)
+            hindi_path = Path(hindi)
+            map_location = torch.device("cpu") if self.device in {"cpu", "mps"} else None
+
+            ve = VoiceEncoder()
+            ve.load_state_dict(torch.load(shared_path / "ve.pt", map_location=map_location, weights_only=True))
+            ve.to(self.device).eval()
+
+            t3 = T3(T3Config.multilingual())
+            t3.load_state_dict(load_safetensors(hindi_path / "t3_hi.safetensors"))
+            t3.to(self.device).eval()
+
+            s3gen = S3Gen()
+            s3gen_state = torch.load(
+                hindi_path / "s3gen_v3.pt", map_location=map_location, weights_only=True
+            )
+            load_result = s3gen.load_state_dict(s3gen_state, strict=False)
+            ignored_missing = set(getattr(s3gen, "ignore_state_dict_missing", ()))
+            unexpected = set(load_result.unexpected_keys)
+            missing = set(load_result.missing_keys) - ignored_missing
+            if missing or unexpected:
+                raise RuntimeError(
+                    "The Hindi V3 S3Gen checkpoint is incompatible with the installed "
+                    f"Chatterbox loader (missing={sorted(missing)}, "
+                    f"unexpected={sorted(unexpected)})."
+                )
+            s3gen.to(self.device).eval()
+            tokenizer_path = hindi_path / "grapheme_mtl_merged_expanded_v1.json"
+            if not tokenizer_path.exists():
+                tokenizer_path = shared_path / "grapheme_mtl_merged_expanded_v1.json"
+            tokenizer = MTLTokenizer(str(tokenizer_path))
+            self._models["hindi"] = ChatterboxMultilingualTTS(
+                t3, s3gen, ve, tokenizer, self.device,
+            )
+        return self._models["hindi"]
+
+    def _load_model(self, language_id: str):
+        if language_id == "hi" and self.hindi_model == "dedicated":
+            return self._load_hindi_model()
+        return self._load_multilingual_model()
 
     def generate(
         self, text: str, language_id: str, reference_path: str,
@@ -121,7 +220,7 @@ class VoiceEngine:
         # not just model loading, so concurrent requests cannot mix speakers.
         with self._lock, TemporaryDirectory(prefix="hindi-voice-") as temporary:
             progress(0.03, "Loading model; the first run downloads weights…")
-            model = self._load_model()
+            model = self._load_model(language_id)
             import torch
 
             random.seed(actual_seed)
@@ -164,5 +263,6 @@ def get_engine() -> VoiceEngine:
             _ENGINE = VoiceEngine(
                 os.getenv("VOICE_STUDIO_DEVICE", "auto"),
                 os.getenv("CHATTERBOX_MULTILINGUAL_T3_MODEL", "v3"),
+                os.getenv("VOICE_STUDIO_HINDI_MODEL", "multilingual"),
             )
         return _ENGINE

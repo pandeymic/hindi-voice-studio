@@ -35,7 +35,7 @@ def test_chunk_text_breaks_long_input_without_dropping_words():
 
 
 def test_hinglish_preview_is_editable_and_supports_overrides():
-    assert pronunciation_preview("Aaj kaafi achha hai", "Hinglish") == "आज काफ़ी अच्छा है"
+    assert pronunciation_preview("Aaj ek kaafi achha hai", "Hinglish") == "आज एक काफ़ी अच्छा है"
     assert pronunciation_preview("Aaj main ready hoon", "Hinglish", "main=main") == "आज main ready हूँ"
 
 

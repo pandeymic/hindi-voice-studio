@@ -12,9 +12,12 @@ settings. The UI exposes the important controls so samples can be compared.
 
 ## What is included
 
-- Hindi text-to-speech with the V3 multilingual checkpoint.
-- Hinglish input: select `Hinglish` for Roman Hindi mixed with English; use
-  Devanagari directly when you want Hindi pronunciation to be unambiguous.
+- Hindi text-to-speech with the verified Chatterbox Multilingual V3 checkpoint.
+  An official Hindi-specific V3 finetune is available as an experimental opt-in,
+  but it is much heavier on an 8 GB Mac and is not the default.
+- Hinglish input: select `Hinglish` for Roman Hindi mixed with English. The app
+  converts a conservative set of Roman-Hindi words into Devanagari before
+  synthesis; edit the speech preview for words it cannot infer safely.
 - English text-to-speech.
 - Zero-shot cloning from an uploaded file or microphone recording.
 - Local inference with MPS support on Apple Silicon, CUDA support when available,
@@ -114,7 +117,8 @@ incorrectly, write that word in Devanagari.
 Gradio UI
    -> consent + audio validation
    -> text normalization and sentence chunking
-   -> ChatterboxMultilingualTTS (V3, hi/en)
+   -> Chatterbox Multilingual V3 for hi/Hinglish/en
+      (optional Hindi-specific finetune is experimental)
    -> Perth-watermarked WAV
 ```
 

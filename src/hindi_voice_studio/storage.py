@@ -27,7 +27,7 @@ def save_generation(
     sf.write(wav_path, result.audio, result.sample_rate, subtype="FLOAT")
     metadata = {
         "app_version": __version__, "created_at": timestamp.isoformat(),
-        "engine": "chatterbox-multilingual", "model_version": model_version,
+        "engine": "chatterbox-multilingual", "model_id": model_version,
         "model_revision": revision, "device": device, "language": language,
         "spoken_text": text, "options": {**asdict(options), "seed": result.seed},
         "sample_rate": result.sample_rate,
